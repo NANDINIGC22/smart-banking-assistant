@@ -1,33 +1,50 @@
-# ✅ Final Clean llm_selector.py Compatible with openai ≥ 1.0.0
-
 import os
-import openai
 import requests
+import json
+import openai
 
-client = openai.Client(api_key=os.getenv("OPENAI_API_KEY"))
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
-def get_llm(model_name):
-    ollama_server = "http://localhost:11434"
-
-    def call_openai(prompt, model):
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": "You are a helpful banking assistant."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.2
+def call_openai(prompt, model_name):
+    try:
+        response = openai.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "user", "content": prompt}]
         )
         return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"OpenAI request failed: {e}"
 
-    def call_ollama(prompt, model):
-        payload = {"model": model, "prompt": prompt}
-        resp = requests.post(f"{ollama_server}/api/generate", json=payload)
-        return resp.json().get("response", "No response from Ollama.")
+def call_ollama(prompt, model_name):
+    url = "http://localhost:11434/api/generate"
+    payload = {
+        "model": model_name,
+        "prompt": prompt,
+        "stream": False
+    }
+    try:
+        resp = requests.post(url, json=payload)
 
-    if model_name in ["gpt-4", "gpt-4o", "gpt-3.5"]:
+        # Try clean JSON parse first
+        try:
+            return resp.json().get("response", "No response from Ollama.")
+        except json.JSONDecodeError:
+            # Fallback: handle newline-separated JSON or noisy response
+            lines = resp.text.splitlines()
+            for line in lines:
+                try:
+                    data = json.loads(line)
+                    return data.get("response", "No response from Ollama.")
+                except json.JSONDecodeError:
+                    continue
+            return "Invalid response format from Ollama."
+    except Exception as e:
+        return f"Ollama request failed: {e}"
+
+def get_llm(model_name):
+    if model_name in ["gpt-4", "gpt-4o", "gpt-3.5-turbo"]:
         return lambda prompt: call_openai(prompt, model_name)
-    elif model_name in ["llama3", "mistral", "deepseek"]:
+    elif model_name in ["llama3", "mistral"]:
         return lambda prompt: call_ollama(prompt, model_name)
     else:
-        raise ValueError("Unsupported model selected")
+        raise ValueError(f"Unsupported model: {model_name}")
